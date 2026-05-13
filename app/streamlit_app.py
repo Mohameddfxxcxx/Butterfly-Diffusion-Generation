@@ -30,6 +30,7 @@ sys.path.insert(0, str(REPO))
 
 from src.inference import ButterflyDiffusionPipeline, auto_device  # noqa: E402
 from src.utils.visualize import denorm                              # noqa: E402
+from src.utils.fetch_checkpoint import ensure_checkpoint              # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Page / theme
@@ -95,6 +96,21 @@ def load_pipeline(ckpt_path: str, device_pref: str):
     return ButterflyDiffusionPipeline(ckpt_path, device=device_pref)
 
 
+@st.cache_resource(show_spinner=False)
+def bootstrap_checkpoint() -> Path:
+    """Make sure checkpoints/ema_only.pt exists, downloading from the GitHub
+    Release on first boot (Streamlit Cloud clones the repo without it)."""
+    target = REPO / "checkpoints" / "ema_only.pt"
+    if target.exists() and target.stat().st_size > 240 * 1024 * 1024:
+        return target
+    pbar = st.progress(0.0, text="First-time setup: downloading 253 MB checkpoint…")
+    def _cb(frac, dl, total):
+        pbar.progress(min(1.0, frac), text=f"Downloading checkpoint… {dl/1e6:.1f} / {total/1e6:.1f} MB")
+    ensure_checkpoint(target=target, progress_callback=_cb)
+    pbar.empty()
+    return target
+
+
 def discover_checkpoints() -> List[Path]:
     return sorted((REPO / "checkpoints").glob("*.pt"))
 
@@ -105,12 +121,17 @@ def discover_checkpoints() -> List[Path]:
 with st.sidebar:
     st.subheader("⚙️ Configuration")
 
+    # First-time setup: download the slim EMA checkpoint if not present.
+    try:
+        bootstrap_checkpoint()
+    except Exception as e:
+        st.error(f"Checkpoint download failed: {e}\n\n"
+                 f"Place `ema_only.pt` (252 MB) into `checkpoints/` manually.")
+        st.stop()
+
     ckpt_list = [str(p) for p in discover_checkpoints()]
     if not ckpt_list:
-        st.warning(
-            "No `.pt` files found in `checkpoints/`. "
-            "Drop `ema_only.pt` (252 MB) from the Kaggle output there."
-        )
+        st.warning("No `.pt` files found in `checkpoints/` after bootstrap.")
         st.stop()
     ckpt_pretty = [Path(p).name for p in ckpt_list]
     idx = st.selectbox("Checkpoint", range(len(ckpt_list)), format_func=lambda i: ckpt_pretty[i])
@@ -124,15 +145,25 @@ with st.sidebar:
     )
     device = auto_device(device_pref if device_pref != "auto" else None)
 
+    # On CPU, sampling is ~50x slower — auto-pick conservative defaults.
+    cpu_mode = device.type == "cpu"
+    if cpu_mode:
+        st.info("CPU mode — sampler defaults are conservative. DDIM is recommended; "
+                "DDPM at 1000 steps will take several minutes per image.", icon="🐌")
+
     st.subheader("🎲 Sampler")
     sampler = st.radio("Algorithm", ["ddim", "ddpm"], horizontal=True)
     if sampler == "ddim":
-        steps = st.slider("DDIM steps", 10, 200, 50, step=10)
+        default_steps = 25 if cpu_mode else 50
+        steps = st.slider("DDIM steps", 10, 200, default_steps, step=5)
     else:
         steps = st.slider("DDPM steps (fixed)", 1000, 1000, 1000, disabled=True)
 
-    n_images = st.slider("Number of samples", 1, 64, 16, step=1)
-    nrow = st.slider("Grid columns", 1, 8, 4)
+    default_n = 4 if cpu_mode else 16
+    max_n = 16 if cpu_mode else 64
+    default_nrow = 2 if cpu_mode else 4
+    n_images = st.slider("Number of samples", 1, max_n, default_n, step=1)
+    nrow = st.slider("Grid columns", 1, 8, default_nrow)
     seed_in = st.number_input("Seed (-1 = random each run)", value=42, step=1)
     seed = None if seed_in == -1 else int(seed_in)
 

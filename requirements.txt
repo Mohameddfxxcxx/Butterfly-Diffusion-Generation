@@ -1,6 +1,9 @@
-# Core deep learning
-torch>=2.1
-torchvision>=0.16
+# Streamlit Cloud is CPU-only. Pin the CPU build of torch so we don't
+# pull ~2 GB of CUDA libs at deploy time.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.4.1+cpu
+torchvision==0.19.1+cpu
 
 # Data
 datasets>=2.14
@@ -12,7 +15,7 @@ accelerate>=0.27
 einops>=0.7
 
 # Numerics + plotting
-numpy>=1.26
+numpy>=1.26,<2.0
 scikit-learn>=1.4
 matplotlib>=3.8
 seaborn>=0.13
