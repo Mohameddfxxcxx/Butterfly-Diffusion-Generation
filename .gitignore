@@ -25,4 +25,4 @@ Thumbs.db
 
 wandb/
 mlruns/
-.streamlit/
+.streamlit/secrets.toml
